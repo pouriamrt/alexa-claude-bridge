@@ -1,16 +1,13 @@
 # ── Alexa-Claude Bridge Makefile ──────────────────────────────────────
 #
-# Usage:
-#   make setup        — first-time: AWS resources + .env + deps + bridge install
-#   make deploy       — package and deploy Lambda + update Alexa skill model
-#   make start        — activate bridge (daemon + flag)
-#   make stop         — deactivate bridge
-#   make teardown     — destroy all AWS resources
+# Workflow:
+#   make setup           — first-time: AWS infra + deps + bridge config
+#   make deploy          — package and deploy Lambda + Alexa skill model
+#   make start           — activate bridge (run before/during a Claude session)
+#   make stop            — deactivate bridge
+#   make teardown        — destroy all AWS resources
 #
-# Prerequisites:
-#   - AWS CLI configured (aws configure)
-#   - ASK CLI installed (npm i -g ask-cli) — optional, for skill deploy
-#   - uv (Python package manager)
+# Prerequisites: aws (configured), uv, ask-cli (optional, for skill deploy)
 # ──────────────────────────────────────────────────────────────────────
 
 SHELL := bash
@@ -31,21 +28,25 @@ SKILL_ID         ?= $(shell cat .skill-id 2>/dev/null)
 BUILD_DIR    := .build
 LAMBDA_ZIP   := $(BUILD_DIR)/lambda.zip
 ENV_FILE     := .env
+BRIDGE_DIR   := ~/.claude-bridge
 
 # ======================================================================
 #  High-level targets
 # ======================================================================
 
-.PHONY: setup deploy start stop status teardown clean help
+.PHONY: setup deploy start stop status logs teardown clean help
 .DEFAULT_GOAL := help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
-setup: infra env install bridge-install ## Full setup: AWS + deps + bridge config
+setup: infra env install bridge-install ## First-time: AWS + deps + bridge config
+	@echo ""
+	@echo "=== Setup complete ==="
+	@echo "Next: make deploy, then create Alexa skill (see README)"
 
-deploy: lambda-deploy ## Package Lambda and deploy (optionally update skill)
+deploy: lambda-deploy ## Deploy Lambda (+ Alexa skill if .skill-id exists)
 	@echo ""
 	@echo "=== Deploy complete ==="
 	@if [ -n "$(SKILL_ID)" ]; then \
@@ -53,23 +54,30 @@ deploy: lambda-deploy ## Package Lambda and deploy (optionally update skill)
 		$(MAKE) skill-deploy; \
 	else \
 		echo "No .skill-id found — upload skill/interaction_model.json manually"; \
-		echo "Then save the skill ID to .skill-id for future deploys"; \
+		echo "Then: echo 'amzn1.ask.skill.xxx' > .skill-id"; \
 	fi
 
-start: ## Activate bridge (starts daemon, enables notifications)
-	uv run alexa-bridge start
+# ======================================================================
+#  Bridge lifecycle
+# ======================================================================
 
-stop: ## Deactivate bridge
-	uv run alexa-bridge stop
+start: ## Activate bridge — daemon starts, Claude notifies Alexa when done
+	@uv run alexa-bridge start
 
-status: ## Show bridge status
-	uv run alexa-bridge status
+stop: ## Deactivate bridge — daemon stops, notifications disabled
+	@uv run alexa-bridge stop
 
-bridge-install: ## Configure bridge: config file, notify script, CLAUDE.md rule
-	uv run alexa-bridge install
+status: ## Show bridge status (active/inactive, daemon PID, notify config)
+	@uv run alexa-bridge status
+
+logs: ## Tail the background daemon log
+	@uv run alexa-bridge logs
+
+bridge-install: ## One-time: create config, notify script, add CLAUDE.md rule
+	@uv run alexa-bridge install
 
 # ======================================================================
-#  Infrastructure
+#  Infrastructure (AWS)
 # ======================================================================
 
 .PHONY: infra infra-sqs infra-dynamodb infra-iam
@@ -144,11 +152,8 @@ env: ## Generate .env from live AWS resources
 	COMMAND_QUEUE_URL=$$QUEUE_URL
 	RESULTS_TABLE=$(TABLE_NAME)
 	AWS_REGION=$(AWS_REGION)
-	NOTIFY_ME_ACCESS_CODE=
-	CLAUDE_TIMEOUT=300
 	EOF
 	@echo "  Written to $(ENV_FILE)"
-	@echo "  (edit to add NOTIFY_ME_ACCESS_CODE if you want proactive Alexa speech)"
 
 # ======================================================================
 #  Local install
@@ -157,20 +162,20 @@ env: ## Generate .env from live AWS resources
 .PHONY: install lint
 
 install: ## Install Python dependencies
-	uv sync
+	@uv sync
 
 lint: ## Lint all source files
-	uv run ruff check src/ lambda/
-	uv run ruff format --check src/ lambda/
+	@uv run ruff check src/ lambda/
+	@uv run ruff format --check src/ lambda/
 
 # ======================================================================
 #  Lambda packaging & deploy
 # ======================================================================
 
-.PHONY: lambda-package lambda-deploy lambda-update
+.PHONY: lambda-package lambda-deploy
 
 $(BUILD_DIR):
-	mkdir -p $(BUILD_DIR)
+	@mkdir -p $(BUILD_DIR)
 
 lambda-package: $(BUILD_DIR) ## Zip the Lambda handler (boto3 is in the runtime)
 	@echo "Packaging Lambda..."
@@ -216,7 +221,7 @@ lambda-deploy: lambda-package ## Create or update the Lambda function
 	fi
 
 lambda-logs: ## Tail Lambda CloudWatch logs
-	aws logs tail "/aws/lambda/$(LAMBDA_NAME)" \
+	@aws logs tail "/aws/lambda/$(LAMBDA_NAME)" \
 		--region "$(AWS_REGION)" --follow --format short
 
 # ======================================================================
@@ -228,7 +233,7 @@ lambda-logs: ## Tail Lambda CloudWatch logs
 skill-deploy: ## Update Alexa skill interaction model (requires .skill-id)
 	@if [ -z "$(SKILL_ID)" ]; then \
 		echo "ERROR: No .skill-id file. Create skill at developer.amazon.com first,"; \
-		echo "then save the skill ID: echo 'amzn1.ask.skill.xxx' > .skill-id"; \
+		echo "then: echo 'amzn1.ask.skill.xxx' > .skill-id"; \
 		exit 1; \
 	fi
 	@echo "Updating skill model for $(SKILL_ID)..."
@@ -241,7 +246,7 @@ skill-deploy: ## Update Alexa skill interaction model (requires .skill-id)
 
 skill-status: ## Check Alexa skill build status
 	@if [ -z "$(SKILL_ID)" ]; then echo "No .skill-id"; exit 1; fi
-	ask smapi get-skill-status --skill-id "$(SKILL_ID)"
+	@ask smapi get-skill-status --skill-id "$(SKILL_ID)"
 
 # ======================================================================
 #  Testing & debugging
@@ -250,32 +255,37 @@ skill-status: ## Check Alexa skill build status
 .PHONY: test-send test-result queue-status
 
 test-send: ## Send a test command to SQS (usage: make test-send CMD="check git status")
-	@set -a; source $(ENV_FILE); set +a; \
-	CMD="$${CMD:-hello}"; \
+	@CMD="$${CMD:-hello}"; \
+	QUEUE_URL=$$(aws sqs get-queue-url \
+		--queue-name "$(QUEUE_NAME)" \
+		--region "$(AWS_REGION)" \
+		--query 'QueueUrl' --output text) && \
 	aws sqs send-message \
-		--queue-url "$$COMMAND_QUEUE_URL" \
-		--region "$$AWS_REGION" \
+		--queue-url "$$QUEUE_URL" \
+		--region "$(AWS_REGION)" \
 		--message-body "$$(python -c "import json,uuid,time; print(json.dumps({'command_id':str(uuid.uuid4()),'command':'$$CMD','timestamp':int(time.time())}))")" \
 		--query 'MessageId' --output text && \
 	echo "Sent: $$CMD"
 
 test-result: ## Read the latest result from DynamoDB
-	@set -a; source $(ENV_FILE); set +a; \
-	aws dynamodb query \
-		--table-name "$$RESULTS_TABLE" \
-		--region "$$AWS_REGION" \
+	@aws dynamodb query \
+		--table-name "$(TABLE_NAME)" \
+		--region "$(AWS_REGION)" \
 		--key-condition-expression "pk = :pk" \
 		--expression-attribute-values '{":pk":{"S":"user#default"}}' \
 		--scan-index-forward false \
 		--limit 1 \
-		--query 'Items[0].{command:command.S,summary:summary.S,timestamp:timestamp.S}' \
+		--query 'Items[0].{summary:summary.S,timestamp:timestamp.S}' \
 		--output table
 
-queue-status: ## Show SQS queue stats
-	@set -a; source $(ENV_FILE); set +a; \
+queue-status: ## Show SQS queue depth
+	@QUEUE_URL=$$(aws sqs get-queue-url \
+		--queue-name "$(QUEUE_NAME)" \
+		--region "$(AWS_REGION)" \
+		--query 'QueueUrl' --output text) && \
 	aws sqs get-queue-attributes \
-		--queue-url "$$COMMAND_QUEUE_URL" \
-		--region "$$AWS_REGION" \
+		--queue-url "$$QUEUE_URL" \
+		--region "$(AWS_REGION)" \
 		--attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible \
 		--output table
 
@@ -285,8 +295,9 @@ queue-status: ## Show SQS queue stats
 
 .PHONY: teardown
 
-teardown: ## Destroy all AWS resources (IRREVERSIBLE)
-	@echo "WARNING: This will delete the SQS queue, DynamoDB table, Lambda, and IAM role."
+teardown: stop ## Destroy all AWS resources + local bridge config (IRREVERSIBLE)
+	@echo "WARNING: This will delete the SQS queue, DynamoDB table, Lambda, IAM role,"
+	@echo "         and local bridge config (~/.claude-bridge/)."
 	@read -p "Type 'yes' to confirm: " CONFIRM && [ "$$CONFIRM" = "yes" ] || exit 1
 	@echo ""
 	@echo "Deleting Lambda..."
@@ -299,11 +310,13 @@ teardown: ## Destroy all AWS resources (IRREVERSIBLE)
 	@echo "Deleting IAM role..."
 	@aws iam delete-role-policy --role-name "$(LAMBDA_ROLE_NAME)" --policy-name "claude-bridge-permissions" 2>/dev/null || true
 	@aws iam delete-role --role-name "$(LAMBDA_ROLE_NAME)" 2>/dev/null || true
-	@echo "Done. All AWS resources removed."
+	@echo "Removing local bridge config..."
+	@rm -rf $(BRIDGE_DIR)
+	@echo "Done. All resources removed."
 
 # ======================================================================
 #  Cleanup
 # ======================================================================
 
 clean: ## Remove build artifacts
-	rm -rf $(BUILD_DIR)
+	@rm -rf $(BUILD_DIR)
