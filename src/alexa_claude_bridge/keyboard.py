@@ -81,11 +81,18 @@ def _set_clipboard(text: str) -> None:
     user32.EmptyClipboard()
     encoded = text.encode("utf-16-le") + b"\x00\x00"
     h_mem = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(encoded))
-    if h_mem:
-        ptr = kernel32.GlobalLock(h_mem)
-        ctypes.memmove(ptr, encoded, len(encoded))
-        kernel32.GlobalUnlock(h_mem)
-        user32.SetClipboardData(CF_UNICODETEXT, h_mem)
+    if not h_mem:
+        logger.warning("GlobalAlloc failed — cannot copy to clipboard")
+        user32.CloseClipboard()
+        return
+    ptr = kernel32.GlobalLock(h_mem)
+    if not ptr:
+        logger.warning("GlobalLock failed — cannot copy to clipboard")
+        user32.CloseClipboard()
+        return
+    ctypes.memmove(ptr, encoded, len(encoded))
+    kernel32.GlobalUnlock(h_mem)
+    user32.SetClipboardData(CF_UNICODETEXT, h_mem)
     user32.CloseClipboard()
 
 

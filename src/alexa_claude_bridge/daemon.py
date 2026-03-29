@@ -54,19 +54,22 @@ def run() -> None:
             continue
 
         for msg in resp.get("Messages", []):
-            body = json.loads(msg["Body"])
-            command = body["command"]
-            logger.info("Alexa says: %s", command)
+            try:
+                body = json.loads(msg["Body"])
+                command = body["command"]
+                logger.info("Alexa says: %s", command)
 
-            if inject_command(command, window_title, exclude_titles=exclude_titles):
-                logger.info("Command injected into Claude terminal")
-            else:
-                logger.warning("Failed to inject — window not found")
-
-            sqs.delete_message(
-                QueueUrl=queue_url,
-                ReceiptHandle=msg["ReceiptHandle"],
-            )
+                if inject_command(command, window_title, exclude_titles=exclude_titles):
+                    logger.info("Command injected into Claude terminal")
+                else:
+                    logger.warning("Failed to inject — window not found")
+            except Exception:
+                logger.exception("Failed to process message")
+            finally:
+                sqs.delete_message(
+                    QueueUrl=queue_url,
+                    ReceiptHandle=msg["ReceiptHandle"],
+                )
 
     logger.info("Flag file removed — daemon shutting down")
 
