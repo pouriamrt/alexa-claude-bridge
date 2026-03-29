@@ -16,6 +16,14 @@ logger = logging.getLogger(__name__)
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
 
+# ── Set proper 64-bit return/arg types (prevents handle truncation) ───
+kernel32.GlobalAlloc.restype = ctypes.c_void_p
+kernel32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
+kernel32.GlobalLock.restype = ctypes.c_void_p
+kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+
 # Virtual key codes
 VK_CONTROL = 0x11
 VK_V = 0x56
