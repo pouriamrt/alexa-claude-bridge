@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.venv/
+
+# Build
+.build/
+
+# Environment
+.env
+
+# Ruff
+.ruff_cache/
+
+# Alexa skill ID (personal)
+.skill-id
+
+# uv
+uv.lock
+
+# IDE
+.vscode/
+.idea/

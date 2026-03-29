@@ -1,0 +1,60 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "claude",
+      "intents": [
+        {
+          "name": "RunCommandIntent",
+          "slots": [
+            {
+              "name": "command",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
+          "samples": [
+            "run {command}",
+            "execute {command}",
+            "to {command}",
+            "please {command}",
+            "{command}",
+            "go ahead and {command}",
+            "can you {command}",
+            "I need you to {command}",
+            "do {command}"
+          ]
+        },
+        {
+          "name": "GetResultIntent",
+          "samples": [
+            "what happened",
+            "what's the result",
+            "what did you do",
+            "get the result",
+            "read the result",
+            "what did claude say",
+            "any updates",
+            "is it done",
+            "what's the status",
+            "tell me the result"
+          ]
+        },
+        {
+          "name": "AMAZON.HelpIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.StopIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.CancelIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.FallbackIntent",
+          "samples": []
+        }
+      ]
+    }
+  }
+}
