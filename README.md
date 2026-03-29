@@ -21,7 +21,7 @@
 
 > **"Alexa, ask my code assistant to run the tests"**
 >
-> Alexa sends the command to your Claude Code terminal. Claude runs it, then announces the result back through Alexa.
+> Alexa sends the command to your Claude Code terminal. Claude runs it, then pushes the result to your phone via [ntfy.sh](https://ntfy.sh).
 
 ---
 
@@ -36,12 +36,12 @@
    tests"              Sends to SQS                 Polls SQS
                                                        │
                                                        ▼
-                       Notify Me      <───     Claude Code REPL
-                       API / DynamoDB          Executes command
+                       ntfy.sh        <───     Claude Code REPL
+                       + DynamoDB              Executes command
                            │                   Sends result back
                            ▼
-                      "Claude:
-                       All 42 tests
+                      Phone push:
+                      "All 42 tests
                        passed"
 ```
 
@@ -67,7 +67,7 @@ flowchart LR
     end
 
     subgraph Notify["fa:fa-bell Notification"]
-        NotifyMe["fa:fa-volume-up Notify Me API"]
+        Ntfy["fa:fa-mobile-alt ntfy.sh"]
     end
 
     Voice -->|"run the tests"| Alexa
@@ -76,9 +76,9 @@ flowchart LR
     SQS -->|Long Poll| Daemon
     Daemon --> Keyboard
     Keyboard -->|Ctrl+V, Enter| Claude
-    Claude -->|notify script| NotifyMe
+    Claude -->|notify script| Ntfy
     Claude -->|store result| DynamoDB
-    NotifyMe -->|"Claude: tests passed"| Voice
+    Ntfy -->|push notification| Voice
     DynamoDB -->|"what happened?"| Lambda
 
     style Voice fill:#8B5CF6,stroke:#6D28D9,color:#fff
@@ -89,7 +89,7 @@ flowchart LR
     style Daemon fill:#3776AB,stroke:#2B5F8A,color:#fff
     style Keyboard fill:#3776AB,stroke:#2B5F8A,color:#fff
     style Claude fill:#D97706,stroke:#B45309,color:#fff
-    style NotifyMe fill:#10B981,stroke:#059669,color:#fff
+    style Ntfy fill:#10B981,stroke:#059669,color:#fff
 ```
 
 ### Step by Step
@@ -119,8 +119,16 @@ sequenceDiagram
 
     Note over Claude: Executes command...
 
-    Claude->>Alexa: notify "All 42 tests passed"
-    Alexa-->>User: "Claude: All 42 tests passed"
+    Claude->>User: ntfy push: "All 42 tests passed"
+
+    opt User asks later
+        User->>Alexa: "What happened?"
+        Alexa->>Lambda: GetResultIntent
+        Lambda->>DynamoDB: Query latest
+        DynamoDB-->>Lambda: result
+        Lambda-->>Alexa: "All 42 tests passed"
+        Alexa-->>User: speaks result
+    end
 ```
 
 ---
@@ -130,7 +138,7 @@ sequenceDiagram
 | Feature | Description |
 |---------|-------------|
 | **Voice commands** | Speak naturally — "run the tests", "check git status", "commit my changes" |
-| **Bidirectional** | Commands go in, results come back. Alexa speaks when Claude is done |
+| **Push notifications** | Get instant phone notifications via [ntfy.sh](https://ntfy.sh) when Claude finishes (Alexa-originated commands only) |
 | **Result recall** | Ask "Alexa, what happened?" anytime to hear the latest result |
 | **Window targeting** | Matches your terminal by window class — works even when Claude Code changes its title |
 | **Crash resilient** | Daemon survives clipboard failures; poison SQS messages can't crash-loop |
@@ -146,7 +154,7 @@ sequenceDiagram
 - **Python 3.13+** with [`uv`](https://docs.astral.sh/uv/)
 - **AWS CLI** configured (`aws configure`)
 - **Alexa Developer Account** at [developer.amazon.com](https://developer.amazon.com)
-- **Notify Me** Alexa skill + access code from [notifymyecho.com](https://www.notifymyecho.com) *(optional, for voice notifications)*
+- **ntfy app** on your phone — [Android](https://play.google.com/store/apps/details?id=io.heckel.ntfy) / [iOS](https://apps.apple.com/app/ntfy/id1625396347) *(for push notifications when Claude finishes)*
 
 ---
 
@@ -183,14 +191,16 @@ This runs three things:
 make deploy
 ```
 
-### 4. Configure Notifications *(optional)*
+### 4. Configure Push Notifications
 
-1. Enable the **Notify Me** skill on your Alexa
-2. Get your access code from [notifymyecho.com](https://www.notifymyecho.com)
-3. Add it to `~/.claude-bridge/config.json`:
+1. Install the **ntfy** app on your phone ([Android](https://play.google.com/store/apps/details?id=io.heckel.ntfy) / [iOS](https://apps.apple.com/app/ntfy/id1625396347))
+2. Pick a random topic name (e.g., `claude-bridge-a1b2c3d4`) and add it to `~/.claude-bridge/config.json`:
    ```json
-   "notify_me_access_code": "your-access-code-here"
+   "ntfy_topic": "claude-bridge-a1b2c3d4"
    ```
+3. Open the ntfy app → tap **+** → subscribe to the same topic name
+
+Notifications are sent **only** for Alexa-originated commands, not when you type directly into Claude Code.
 
 ### 5. Start the Bridge
 
@@ -240,7 +250,11 @@ You can use natural phrasing — "run", "execute", "do", "check", "try", "launch
   // Result storage
   "results_table": "claude-bridge-results",
 
-  // Alexa speaks results (optional — get code from notifymyecho.com)
+  // Push notifications (recommended)
+  "ntfy_topic": "claude-bridge-your-random-id",  // Subscribe to this in the ntfy app
+  "ntfy_server": "https://ntfy.sh",               // Default; change if self-hosting
+
+  // Alexa voice notifications (optional fallback — get code from notifymyecho.com)
   "notify_me_access_code": "",
 
   // Window targeting — how the daemon finds your Claude Code terminal
@@ -330,20 +344,23 @@ alexa-claude-bridge/
 | "Window not found" | Wrong window class or Claude Code not running | Run `make status`, check `make logs`, verify terminal is open |
 | Commands repeat / crash loop | Poison SQS message not deleted on failure | Fixed in v0.3.0 — `finally` block always deletes messages |
 | Alexa says "I don't know that one" | Skill not built or invocation name mismatch | Rebuild skill in Alexa Developer Console |
-| No voice notification | `notify_me_access_code` not set | Get code from [notifymyecho.com](https://www.notifymyecho.com) |
+| No push notification | `ntfy_topic` not set or app not subscribed | Add topic to config, subscribe in ntfy app |
+| Notifications on every command | `pending-notify` not being cleaned up | Ensure CLAUDE.md has the `&& rm` cleanup command |
 
 ---
 
-## How Claude Knows to Notify
+## How Notifications Work
 
-During `make setup`, the bridge appends this instruction to `~/.claude/CLAUDE.md`:
+During `make setup`, the bridge appends an instruction to `~/.claude/CLAUDE.md`. This tells Claude Code to:
 
-```markdown
-After completing each user request, check if ~/.claude-bridge/active exists.
-If it does, run: ~/.claude-bridge/notify "<summary>"
-```
+1. After completing each request, check if `~/.claude-bridge/pending-notify` exists
+2. If it does, run the notify script and remove the file
 
-Claude Code reads this on every session and automatically notifies Alexa when done — no manual intervention needed.
+The `pending-notify` file is created by the daemon **only** when it injects an Alexa command. This means:
+- **Alexa command** → daemon creates `pending-notify` → Claude completes → sends notification → removes file
+- **Direct typing** → no `pending-notify` → no notification
+
+Both ntfy and Notify Me can run in parallel — configure either or both in `config.json`.
 
 ---
 
