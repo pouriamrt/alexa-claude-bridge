@@ -184,7 +184,11 @@ def cmd_notify(args: argparse.Namespace) -> None:
     with open(CONFIG_FILE) as f:
         config = json.load(f)
 
-    # 1. Notify Me API (Alexa speaks this)
+    # 1. Push notification (ntfy.sh or Notify Me)
+    ntfy_topic = config.get("ntfy_topic", "")
+    if ntfy_topic:
+        _send_ntfy(summary, ntfy_topic, config.get("ntfy_server", "https://ntfy.sh"))
+
     access_code = config.get("notify_me_access_code", "")
     if access_code:
         _send_notify_me(summary, access_code)
@@ -202,6 +206,21 @@ def cmd_logs(_args: argparse.Namespace) -> None:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
+
+
+def _send_ntfy(summary: str, topic: str, server: str = "https://ntfy.sh") -> None:
+    """Send push notification via ntfy.sh."""
+    import contextlib
+
+    import httpx
+
+    with contextlib.suppress(Exception):
+        httpx.post(
+            f"{server}/{topic}",
+            content=summary,
+            headers={"Title": "Claude Code", "Tags": "robot"},
+            timeout=10,
+        )
 
 
 def _send_notify_me(summary: str, access_code: str) -> None:
