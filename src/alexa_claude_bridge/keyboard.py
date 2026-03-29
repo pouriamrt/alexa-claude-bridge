@@ -11,6 +11,10 @@ import ctypes
 import ctypes.wintypes as wintypes
 import logging
 import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +27,7 @@ kernel32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
 kernel32.GlobalLock.restype = ctypes.c_void_p
 kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
 kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+kernel32.GlobalFree.argtypes = [ctypes.c_void_p]
 user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
 
 # Virtual key codes
@@ -38,12 +43,17 @@ KEYEVENTF_KEYUP = 0x0002
 CF_UNICODETEXT = 13
 GMEM_MOVEABLE = 0x0002
 
+# Window messages (PostMessage fallback)
+WM_KEYDOWN = 0x0100
+WM_KEYUP = 0x0101
+
 # Retry / timing
 CLIPBOARD_RETRIES = 3
 CLIPBOARD_RETRY_DELAY = 0.1
 FOCUS_SETTLE_DELAY = 0.5
 POST_PASTE_DELAY = 0.35
 POST_ENTER_DELAY = 0.1
+KEY_HOLD_DELAY = 0.05
 
 
 # ── SendInput structures (64-bit safe) ──────────────────────────────
@@ -59,7 +69,7 @@ class MOUSEINPUT(ctypes.Structure):
         ("mouseData", wintypes.DWORD),
         ("dwFlags", wintypes.DWORD),
         ("time", wintypes.DWORD),
-        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+        ("dwExtraInfo", ctypes.c_uint64),
     ]
 
 
@@ -69,7 +79,7 @@ class KEYBDINPUT(ctypes.Structure):
         ("wScan", wintypes.WORD),
         ("dwFlags", wintypes.DWORD),
         ("time", wintypes.DWORD),
-        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+        ("dwExtraInfo", ctypes.c_uint64),
     ]
 
 
@@ -84,10 +94,13 @@ class INPUT(ctypes.Structure):
     ]
 
 
+# Pre-compute scan codes at module load (constant for the process lifetime)
+_SCAN = {vk: user32.MapVirtualKeyW(vk, 0) for vk in (VK_CONTROL, VK_V, VK_RETURN)}
+
+
 def _make_key_input(vk: int, flags: int = 0) -> INPUT:
-    scan = user32.MapVirtualKeyW(vk, 0)  # MAPVK_VK_TO_VSC
     inp = INPUT(type=INPUT_KEYBOARD)
-    inp.union.ki = KEYBDINPUT(wVk=vk, wScan=scan, dwFlags=flags, time=0, dwExtraInfo=None)
+    inp.union.ki = KEYBDINPUT(wVk=vk, wScan=_SCAN.get(vk, 0), dwFlags=flags, time=0, dwExtraInfo=0)
     return inp
 
 
@@ -123,9 +136,6 @@ def find_window(
     def _enum_callback(hwnd, _lparam):
         if not user32.IsWindowVisible(hwnd):
             return True
-        length = user32.GetWindowTextLengthW(hwnd)
-        if length == 0:
-            return True
 
         # Check window class first (cheapest filter)
         if window_class:
@@ -133,6 +143,10 @@ def find_window(
             user32.GetClassNameW(hwnd, cls_buf, 256)
             if cls_buf.value != window_class:
                 return True
+
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length == 0:
+            return True
 
         buf = ctypes.create_unicode_buffer(length + 1)
         user32.GetWindowTextW(hwnd, buf, length + 1)
@@ -207,6 +221,7 @@ def _set_clipboard(text: str) -> bool:
     ptr = kernel32.GlobalLock(h_mem)
     if not ptr:
         logger.warning("GlobalLock failed — cannot copy to clipboard")
+        kernel32.GlobalFree(h_mem)
         user32.CloseClipboard()
         return False
     ctypes.memmove(ptr, encoded, len(encoded))
@@ -216,14 +231,7 @@ def _set_clipboard(text: str) -> bool:
     return True
 
 
-# ── Window messages (fallback) ───────────────────────────────────────
-
-WM_KEYDOWN = 0x0100
-WM_KEYUP = 0x0101
-WM_PASTE = 0x0302
-
-
-# ── Keystroke helpers (SendInput) ────────────────────────────────────
+# ── Keystroke strategies ─────────────────────────────────────────────
 
 
 def _send_key(vk: int) -> None:
@@ -248,7 +256,7 @@ def _post_ctrl_v(hwnd: int) -> None:
     """Send Ctrl+V directly to a window handle via PostMessage (focus-independent)."""
     user32.PostMessageW(hwnd, WM_KEYDOWN, VK_CONTROL, 0)
     user32.PostMessageW(hwnd, WM_KEYDOWN, VK_V, 0)
-    time.sleep(0.05)
+    time.sleep(KEY_HOLD_DELAY)
     user32.PostMessageW(hwnd, WM_KEYUP, VK_V, 0)
     user32.PostMessageW(hwnd, WM_KEYUP, VK_CONTROL, 0)
 
@@ -257,6 +265,21 @@ def _post_key(hwnd: int, vk: int) -> None:
     """Send a keypress directly to a window handle via PostMessage."""
     user32.PostMessageW(hwnd, WM_KEYDOWN, vk, 0)
     user32.PostMessageW(hwnd, WM_KEYUP, vk, 0)
+
+
+def _inject_keystrokes(
+    paste: Callable[[], None],
+    enter: Callable[[], None],
+    *,
+    settle: bool = False,
+) -> None:
+    """Run a paste→enter sequence with standard timing."""
+    if settle:
+        time.sleep(FOCUS_SETTLE_DELAY)
+    paste()
+    time.sleep(POST_PASTE_DELAY)
+    enter()
+    time.sleep(POST_ENTER_DELAY)
 
 
 # ── Public API ───────────────────────────────────────────────────────
@@ -301,20 +324,11 @@ def inject_command(
     got_focus = focus_window(hwnd)
 
     if got_focus:
-        # SendInput path — requires foreground focus
-        time.sleep(FOCUS_SETTLE_DELAY)
-        _send_ctrl_v()
-        time.sleep(POST_PASTE_DELAY)
-        _send_key(VK_RETURN)
-        time.sleep(POST_ENTER_DELAY)
+        _inject_keystrokes(_send_ctrl_v, lambda: _send_key(VK_RETURN), settle=True)
         logger.info("Injected command via SendInput")
     else:
-        # PostMessage path — sends keystrokes directly to the window handle
         logger.info("Focus failed, using PostMessage fallback")
-        _post_ctrl_v(hwnd)
-        time.sleep(POST_PASTE_DELAY)
-        _post_key(hwnd, VK_RETURN)
-        time.sleep(POST_ENTER_DELAY)
+        _inject_keystrokes(lambda: _post_ctrl_v(hwnd), lambda: _post_key(hwnd, VK_RETURN))
         logger.info("Injected command via PostMessage")
 
     return True

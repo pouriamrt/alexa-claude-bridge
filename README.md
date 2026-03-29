@@ -141,7 +141,9 @@ sequenceDiagram
 | **Push notifications** | Get instant phone notifications via [ntfy.sh](https://ntfy.sh) when Claude finishes (Alexa-originated commands only) |
 | **Result recall** | Ask "Alexa, what happened?" anytime to hear the latest result |
 | **Window targeting** | Matches your terminal by window class — works even when Claude Code changes its title |
-| **Crash resilient** | Daemon survives clipboard failures; poison SQS messages can't crash-loop |
+| **Auto-notification** | Stop hook in Claude Code fires automatically — no manual CLAUDE.md rules needed |
+| **Crash resilient** | Daemon auto-restarts with exponential backoff; clipboard retries; poison messages can't crash-loop |
+| **Reliable input** | Uses Win32 `SendInput` API with correct 64-bit struct layout and `AttachThreadInput` for focus; `PostMessage` fallback |
 | **Zero dependencies on Windows** | Keyboard injection uses raw `ctypes` — no pywinauto, no COM |
 | **One-command setup** | `make setup` provisions all AWS resources and configures locally |
 | **Clean teardown** | `make teardown` removes everything from AWS and your machine |
@@ -171,7 +173,7 @@ make setup
 This runs three things:
 - `make infra` — Creates SQS queue, DynamoDB table, and IAM role in AWS
 - `make install` — Installs Python dependencies via `uv sync`
-- `make bridge-install` — Creates `~/.claude-bridge/` config and adds the notification rule to `~/.claude/CLAUDE.md`
+- `make bridge-install` — Creates `~/.claude-bridge/` config and installs a Stop hook in `~/.claude/settings.json` for auto-notifications
 
 ### 2. Create the Alexa Skill
 
@@ -323,8 +325,10 @@ make logs
 alexa-claude-bridge/
 ├── src/alexa_claude_bridge/
 │   ├── bridge.py          # CLI — install, start, stop, status, notify, logs
-│   ├── daemon.py          # Background SQS poller
-│   └── keyboard.py        # Window targeting + keyboard injection (ctypes)
+│   ├── config.py          # Shared path constants (single source of truth)
+│   ├── daemon.py          # Background SQS poller with auto-restart
+│   ├── keyboard.py        # Window targeting + keyboard injection (SendInput / PostMessage)
+│   └── notifier.py        # Alexa Notify Me API client
 ├── lambda/
 │   └── handler.py         # Alexa skill Lambda — intent routing, SQS/DynamoDB
 ├── skill/
@@ -339,26 +343,32 @@ alexa-claude-bridge/
 
 | Problem | Cause | Fix |
 |---------|-------|-----|
-| Daemon stops immediately | Clipboard access violation (another app holds clipboard) | Fixed in v0.3.0 — NULL-pointer guard in `_set_clipboard` |
+| Daemon stops immediately | Clipboard access violation (another app holds clipboard) | Fixed — clipboard retry with backoff; daemon auto-restarts up to 5 times |
+| Text in clipboard but not pasted | `SendInput` struct was wrong size on 64-bit Windows | Fixed — INPUT struct now 40 bytes (includes MOUSEINPUT for correct union size) |
 | Commands go to VS Code | VS Code title contains the match string | Set `window_class` in config (default now targets Windows Terminal) |
 | "Window not found" | Wrong window class or Claude Code not running | Run `make status`, check `make logs`, verify terminal is open |
-| Commands repeat / crash loop | Poison SQS message not deleted on failure | Fixed in v0.3.0 — `finally` block always deletes messages |
+| Paste works but Enter doesn't fire | Timing too tight between paste and Enter | Fixed — increased delays; `AttachThreadInput` for reliable focus |
+| Commands repeat / crash loop | Poison SQS message not deleted on failure | Fixed — `finally` block always deletes messages |
 | Alexa says "I don't know that one" | Skill not built or invocation name mismatch | Rebuild skill in Alexa Developer Console |
 | No push notification | `ntfy_topic` not set or app not subscribed | Add topic to config, subscribe in ntfy app |
-| Notifications on every command | `pending-notify` not being cleaned up | Ensure CLAUDE.md has the `&& rm` cleanup command |
+| Notifications on every command | `pending-notify` not being cleaned up | Stop hook handles cleanup automatically |
 
 ---
 
 ## How Notifications Work
 
-During `make setup`, the bridge appends an instruction to `~/.claude/CLAUDE.md`. This tells Claude Code to:
+During `alexa-bridge install`, the bridge adds a **Stop hook** to `~/.claude/settings.json`. This hook runs automatically every time Claude Code finishes a response:
 
-1. After completing each request, check if `~/.claude-bridge/pending-notify` exists
-2. If it does, run the notify script and remove the file
+```bash
+# The hook (added automatically — you don't need to touch this)
+bash -c '[ -f ~/.claude-bridge/pending-notify ] && ~/.claude-bridge/notify "Task completed" && rm ~/.claude-bridge/pending-notify; true'
+```
 
 The `pending-notify` file is created by the daemon **only** when it injects an Alexa command. This means:
-- **Alexa command** → daemon creates `pending-notify` → Claude completes → sends notification → removes file
-- **Direct typing** → no `pending-notify` → no notification
+- **Alexa command** → daemon creates `pending-notify` → Claude completes → Stop hook fires notification → removes file
+- **Direct typing** → no `pending-notify` → hook no-ops instantly
+
+This is more reliable than the previous approach (a CLAUDE.md instruction) because hooks execute automatically at the shell level — Claude doesn't need to remember to check.
 
 Both ntfy and Notify Me can run in parallel — configure either or both in `config.json`.
 

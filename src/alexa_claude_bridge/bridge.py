@@ -1,7 +1,7 @@
 """CLI for the Alexa-Claude bridge.
 
 Commands:
-    alexa-bridge install   — one-time setup: config, notify script, CLAUDE.md rule
+    alexa-bridge install   — one-time setup: config, notify script, Stop hook
     alexa-bridge start     — activate bridge (flag file + background daemon)
     alexa-bridge stop      — deactivate bridge
     alexa-bridge status    — show if bridge is active
@@ -13,19 +13,25 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import UTC, datetime
 
-BRIDGE_DIR = os.path.expanduser("~/.claude-bridge")
-FLAG_FILE = os.path.join(BRIDGE_DIR, "active")
-PID_FILE = os.path.join(BRIDGE_DIR, "daemon.pid")
-CONFIG_FILE = os.path.join(BRIDGE_DIR, "config.json")
-LOG_FILE = os.path.join(BRIDGE_DIR, "daemon.log")
-NOTIFY_SCRIPT = os.path.join(BRIDGE_DIR, "notify")
-CLAUDE_SETTINGS = os.path.expanduser("~/.claude/settings.json")
+from .config import (
+    BRIDGE_DIR,
+    CLAUDE_SETTINGS,
+    CONFIG_FILE,
+    FLAG_FILE,
+    LOG_FILE,
+    NOTIFY_SCRIPT,
+    PID_FILE,
+)
+
+logger = logging.getLogger(__name__)
 
 STOP_HOOK_COMMAND = (
     "bash -c '[ -f ~/.claude-bridge/pending-notify ] "
@@ -38,7 +44,7 @@ STOP_HOOK_COMMAND = (
 
 
 def cmd_install(args: argparse.Namespace) -> None:
-    """One-time setup: config file, notify wrapper, CLAUDE.md instruction."""
+    """One-time setup: config file, notify wrapper, Stop hook."""
     os.makedirs(BRIDGE_DIR, exist_ok=True)
 
     # 1. Config file
@@ -182,7 +188,9 @@ def cmd_notify(args: argparse.Namespace) -> None:
 
     access_code = config.get("notify_me_access_code", "")
     if access_code:
-        _send_notify_me(summary, access_code)
+        from .notifier import notify_alexa
+
+        notify_alexa(f"Claude: {summary}", access_code)
 
     # 2. DynamoDB (for "Alexa, ask Claude what happened")
     _store_result(summary, config)
@@ -214,20 +222,6 @@ def _send_ntfy(summary: str, topic: str, server: str = "https://ntfy.sh") -> Non
         )
 
 
-def _send_notify_me(summary: str, access_code: str) -> None:
-    """Send notification to Alexa via Notify Me API."""
-    import contextlib
-
-    import httpx
-
-    with contextlib.suppress(Exception):
-        httpx.post(
-            "https://api.notifymyecho.com/v1/NotifyMe",
-            json={"notification": f"Claude: {summary}", "accessCode": access_code},
-            timeout=10,
-        )
-
-
 def _store_result(summary: str, config: dict) -> None:
     """Store the result in DynamoDB for the GetResult Alexa intent."""
     import boto3
@@ -245,7 +239,7 @@ def _store_result(summary: str, config: dict) -> None:
             }
         )
     except Exception:
-        pass  # Don't break Claude if DynamoDB write fails
+        logger.debug("DynamoDB write failed", exc_info=True)
 
 
 def _config_from_env(env_path: str) -> dict:
@@ -287,8 +281,15 @@ def _add_stop_hook() -> None:
         }
     )
 
-    with open(CLAUDE_SETTINGS, "w") as f:
-        json.dump(settings, f, indent=2)
+    settings_dir = os.path.dirname(CLAUDE_SETTINGS)
+    fd, tmp_path = tempfile.mkstemp(dir=settings_dir, suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(settings, f, indent=2)
+        os.replace(tmp_path, CLAUDE_SETTINGS)
+    except BaseException:
+        os.unlink(tmp_path)
+        raise
     print("Added Stop hook to settings.json (auto-notify on completion)")
 
 

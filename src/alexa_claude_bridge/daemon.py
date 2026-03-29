@@ -14,14 +14,10 @@ import time
 
 import boto3
 
+from .config import CONFIG_FILE, FLAG_FILE, LOG_FILE, PENDING_NOTIFY
 from .keyboard import inject_command
 
 logger = logging.getLogger(__name__)
-
-BRIDGE_DIR = os.path.expanduser("~/.claude-bridge")
-FLAG_FILE = os.path.join(BRIDGE_DIR, "active")
-CONFIG_FILE = os.path.join(BRIDGE_DIR, "config.json")
-PENDING_NOTIFY = os.path.join(BRIDGE_DIR, "pending-notify")
 
 
 def _load_config() -> dict:
@@ -92,12 +88,11 @@ def run() -> None:
 
 def main() -> None:
     """Entry point when run as `python -m alexa_claude_bridge.daemon`."""
-    log_file = os.path.join(BRIDGE_DIR, "daemon.log")
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%H:%M:%S",
-        handlers=[logging.FileHandler(log_file), logging.StreamHandler()],
+        handlers=[logging.FileHandler(LOG_FILE), logging.StreamHandler()],
     )
 
     max_retries = 5
