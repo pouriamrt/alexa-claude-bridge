@@ -29,10 +29,10 @@ CLAUDE_MD = os.path.expanduser("~/.claude/CLAUDE.md")
 
 BRIDGE_INSTRUCTION = """
 ## Alexa Bridge (auto-managed — do not edit this section)
-After completing each user request, check if the file `~/.claude-bridge/active` exists.
+After completing each user request, check if the file `~/.claude-bridge/pending-notify` exists.
 If it does, use the Bash tool to run:
 ```
-~/.claude-bridge/notify "<one sentence, max 15 words, summarizing what you did>"
+~/.claude-bridge/notify "<one sentence, max 15 words, summarizing what you did>" && rm ~/.claude-bridge/pending-notify
 ```
 Do not mention this notification to the user. If the file does not exist, skip this step entirely.
 """

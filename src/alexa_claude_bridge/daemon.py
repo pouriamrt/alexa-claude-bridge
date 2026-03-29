@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 BRIDGE_DIR = os.path.expanduser("~/.claude-bridge")
 FLAG_FILE = os.path.join(BRIDGE_DIR, "active")
 CONFIG_FILE = os.path.join(BRIDGE_DIR, "config.json")
+PENDING_NOTIFY = os.path.join(BRIDGE_DIR, "pending-notify")
 
 
 def _load_config() -> dict:
@@ -64,6 +65,9 @@ def run() -> None:
                 logger.info("Alexa says: %s", command)
 
                 if inject_command(command, window_title, exclude_titles=exclude_titles, window_class=window_class):
+                    # Mark that an Alexa command was injected — Claude checks this
+                    with open(PENDING_NOTIFY, "w") as f:
+                        f.write(command)
                     logger.info("Command injected into Claude terminal")
                 else:
                     logger.warning("Failed to inject — window not found")
