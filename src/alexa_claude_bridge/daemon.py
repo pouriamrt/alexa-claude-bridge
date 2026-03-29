@@ -43,7 +43,9 @@ def run() -> None:
     logger.info("Daemon started — polling %s", queue_url)
     logger.info(
         "Window match: class=%s, title=%s, excluding=%s",
-        window_class, window_title, exclude_titles,
+        window_class,
+        window_title,
+        exclude_titles,
     )
 
     while os.path.exists(FLAG_FILE):
@@ -64,7 +66,13 @@ def run() -> None:
                 command = body["command"]
                 logger.info("Alexa says: %s", command)
 
-                if inject_command(command, window_title, exclude_titles=exclude_titles, window_class=window_class):
+                injected = inject_command(
+                    command,
+                    window_title,
+                    exclude_titles=exclude_titles,
+                    window_class=window_class,
+                )
+                if injected:
                     # Mark that an Alexa command was injected — Claude checks this
                     with open(PENDING_NOTIFY, "w") as f:
                         f.write(command)
@@ -92,13 +100,25 @@ def main() -> None:
         handlers=[logging.FileHandler(log_file), logging.StreamHandler()],
     )
 
-    try:
-        run()
-    except KeyboardInterrupt:
-        logger.info("Daemon interrupted")
-    except Exception:
-        logger.exception("Daemon crashed")
-        sys.exit(1)
+    max_retries = 5
+    retry_delay = 3
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            run()
+            break  # Clean exit (flag file removed)
+        except KeyboardInterrupt:
+            logger.info("Daemon interrupted")
+            break
+        except Exception:
+            logger.exception("Daemon crashed (attempt %d/%d)", attempt, max_retries)
+            if attempt < max_retries and os.path.exists(FLAG_FILE):
+                logger.info("Restarting in %ds...", retry_delay)
+                time.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, 30)
+            else:
+                logger.error("Max retries reached or flag removed — exiting")
+                sys.exit(1)
 
 
 if __name__ == "__main__":

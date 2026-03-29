@@ -25,20 +25,13 @@ PID_FILE = os.path.join(BRIDGE_DIR, "daemon.pid")
 CONFIG_FILE = os.path.join(BRIDGE_DIR, "config.json")
 LOG_FILE = os.path.join(BRIDGE_DIR, "daemon.log")
 NOTIFY_SCRIPT = os.path.join(BRIDGE_DIR, "notify")
-CLAUDE_MD = os.path.expanduser("~/.claude/CLAUDE.md")
+CLAUDE_SETTINGS = os.path.expanduser("~/.claude/settings.json")
 
-BRIDGE_INSTRUCTION = """
-## Alexa Bridge (auto-managed — do not edit this section)
-After completing each user request, check if the file `~/.claude-bridge/pending-notify` exists.
-If it does, use the Bash tool to run:
-```
-~/.claude-bridge/notify "<one sentence, max 15 words, summarizing what you did>" && rm ~/.claude-bridge/pending-notify
-```
-Do not mention this notification to the user. If the file does not exist, skip this step entirely.
-"""
-
-BRIDGE_MARKER_START = "## Alexa Bridge (auto-managed"
-BRIDGE_MARKER_END = "skip this step entirely.\n"
+STOP_HOOK_COMMAND = (
+    "bash -c '[ -f ~/.claude-bridge/pending-notify ] "
+    '&& ~/.claude-bridge/notify "Task completed" '
+    "&& rm ~/.claude-bridge/pending-notify; true'"
+)
 
 
 # ── Commands ──────────────────────────────────────────────────────────
@@ -68,9 +61,7 @@ def cmd_install(args: argparse.Namespace) -> None:
         print(f"Config written: {CONFIG_FILE}")
 
     # 2. Notify wrapper script (called by Claude via Bash tool)
-    alexa_bridge_bin = os.path.join(
-        os.path.dirname(sys.executable), "alexa-bridge"
-    )
+    alexa_bridge_bin = os.path.join(os.path.dirname(sys.executable), "alexa-bridge")
     # Try .exe variant on Windows
     if not os.path.exists(alexa_bridge_bin):
         alexa_bridge_bin += ".exe"
@@ -80,8 +71,8 @@ def cmd_install(args: argparse.Namespace) -> None:
         f.write(f'"{alexa_bridge_bin}" notify "$1"\n')
     print(f"Notify script written: {NOTIFY_SCRIPT}")
 
-    # 3. CLAUDE.md instruction
-    _add_claude_md_instruction()
+    # 3. Stop hook for reliable auto-notification
+    _add_stop_hook()
 
     print()
     print("Install complete. Now edit ~/.claude-bridge/config.json to set:")
@@ -242,9 +233,7 @@ def _store_result(summary: str, config: dict) -> None:
     import boto3
 
     try:
-        dynamodb = boto3.resource(
-            "dynamodb", region_name=config.get("aws_region", "us-east-1")
-        )
+        dynamodb = boto3.resource("dynamodb", region_name=config.get("aws_region", "us-east-1"))
         table = dynamodb.Table(config.get("results_table", "claude-bridge-results"))
         now = datetime.now(UTC)
         table.put_item(
@@ -273,23 +262,34 @@ def _config_from_env(env_path: str) -> dict:
     return config
 
 
-def _add_claude_md_instruction() -> None:
-    """Add the Alexa Bridge section to ~/.claude/CLAUDE.md."""
-    if not os.path.exists(CLAUDE_MD):
-        print(f"CLAUDE.md not found at {CLAUDE_MD} — skipping")
+def _add_stop_hook() -> None:
+    """Add a Stop hook to ~/.claude/settings.json for reliable notifications."""
+    if not os.path.exists(CLAUDE_SETTINGS):
+        print(f"settings.json not found at {CLAUDE_SETTINGS} — skipping hook")
         return
 
-    with open(CLAUDE_MD) as f:
-        content = f.read()
+    with open(CLAUDE_SETTINGS) as f:
+        settings = json.load(f)
 
-    if BRIDGE_MARKER_START in content:
-        print("CLAUDE.md already has bridge instruction — skipping")
-        return
+    hooks = settings.setdefault("hooks", {})
+    stop_hooks = hooks.setdefault("Stop", [])
 
-    with open(CLAUDE_MD, "a") as f:
-        f.write("\n" + BRIDGE_INSTRUCTION)
+    # Check if our hook already exists
+    for entry in stop_hooks:
+        for h in entry.get("hooks", []):
+            if "pending-notify" in h.get("command", ""):
+                print("Stop hook already installed — skipping")
+                return
 
-    print(f"Added bridge instruction to {CLAUDE_MD}")
+    stop_hooks.append(
+        {
+            "hooks": [{"type": "command", "command": STOP_HOOK_COMMAND}],
+        }
+    )
+
+    with open(CLAUDE_SETTINGS, "w") as f:
+        json.dump(settings, f, indent=2)
+    print("Added Stop hook to settings.json (auto-notify on completion)")
 
 
 # ── Entry point ───────────────────────────────────────────────────────
