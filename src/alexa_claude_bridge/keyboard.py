@@ -35,8 +35,15 @@ CF_UNICODETEXT = 13
 GMEM_MOVEABLE = 0x0002
 
 
-def find_window(title_fragment: str) -> int | None:
-    """Find a visible window whose title contains the given text (case-insensitive)."""
+def find_window(
+    title_fragment: str,
+    exclude: list[str] | None = None,
+) -> int | None:
+    """Find a visible window whose title contains the given text (case-insensitive).
+
+    Windows whose title matches any string in *exclude* are skipped.
+    """
+    exclude_lower = [e.lower() for e in (exclude or [])]
     matches: list[int] = []
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -48,7 +55,10 @@ def find_window(title_fragment: str) -> int | None:
             return True
         buf = ctypes.create_unicode_buffer(length + 1)
         user32.GetWindowTextW(hwnd, buf, length + 1)
-        if title_fragment.lower() in buf.value.lower():
+        title = buf.value.lower()
+        if any(ex in title for ex in exclude_lower):
+            return True
+        if title_fragment.lower() in title:
             matches.append(hwnd)
         return True
 
@@ -94,16 +104,23 @@ def _send_ctrl_v() -> None:
     user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
 
 
-def inject_command(command: str, window_title: str = "claude") -> bool:
+def inject_command(
+    command: str,
+    window_title: str = "claude",
+    exclude_titles: list[str] | None = None,
+) -> bool:
     """Paste a command into a terminal window and press Enter.
 
     1. Finds a window with `window_title` in its title bar
+       (skipping any whose title matches *exclude_titles*)
     2. Brings it to the foreground
     3. Copies the command to clipboard → Ctrl+V → Enter
 
     Returns True if injection succeeded.
     """
-    hwnd = find_window(window_title)
+    if exclude_titles is None:
+        exclude_titles = ["Visual Studio Code"]
+    hwnd = find_window(window_title, exclude=exclude_titles)
     if not hwnd:
         logger.warning("No window with '%s' in title — is Claude running?", window_title)
         return False
