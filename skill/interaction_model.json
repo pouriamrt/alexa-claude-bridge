@@ -1,99 +1,102 @@
 {
-    "interactionModel": {
-        "languageModel": {
-            "invocationName": "claude code",
-            "intents": [
-                {
-                    "name": "RunCommandIntent",
-                    "slots": [
-                        {
-                            "name": "command",
-                            "type": "AMAZON.SearchQuery"
-                        }
-                    ],
-                    "samples": [
-                        "run {command}",
-                        "execute {command}",
-                        "to {command}",
-                        "please {command}",
-                        "go ahead and {command}",
-                        "can you {command}",
-                        "I need you to {command}",
-                        "do {command}",
-                        "start {command}",
-                        "try {command}"
-                    ]
-                },
-                {
-                    "name": "GetResultIntent",
-                    "slots": [],
-                    "samples": [
-                        "what happened",
-                        "what's the result",
-                        "what did you do",
-                        "get the result",
-                        "read the result",
-                        "what did claude say",
-                        "any updates",
-                        "is it done",
-                        "what's the status",
-                        "tell me the result"
-                    ]
-                },
-                {
-                    "name": "AMAZON.HelpIntent",
-                    "samples": []
-                },
-                {
-                    "name": "AMAZON.StopIntent",
-                    "samples": []
-                },
-                {
-                    "name": "AMAZON.CancelIntent",
-                    "samples": []
-                },
-                {
-                    "name": "AMAZON.FallbackIntent",
-                    "samples": []
-                },
-                {
-                    "name": "AMAZON.NavigateHomeIntent",
-                    "samples": []
-                }
-            ],
-            "types": []
-        },
-        "dialog": {
-            "intents": [
-                {
-                    "name": "RunCommandIntent",
-                    "confirmationRequired": false,
-                    "prompts": {},
-                    "slots": [
-                        {
-                            "name": "command",
-                            "type": "AMAZON.SearchQuery",
-                            "confirmationRequired": false,
-                            "elicitationRequired": true,
-                            "prompts": {
-                                "elicitation": "Elicit.Slot.command"
-                            }
-                        }
-                    ]
-                }
-            ],
-            "delegationStrategy": "ALWAYS"
-        },
-        "prompts": [
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "my code assistant",
+      "intents": [
+        {
+          "name": "RunCommandIntent",
+          "slots": [
             {
-                "id": "Elicit.Slot.command",
-                "variations": [
-                    {
-                        "type": "PlainText",
-                        "value": "What command should I run?"
-                    }
-                ]
+              "name": "command",
+              "type": "AMAZON.SearchQuery"
             }
+          ],
+          "samples": [
+            "run {command}",
+            "execute {command}",
+            "commit {command}",
+            "do {command}",
+            "start {command}",
+            "try {command}",
+            "go ahead and {command}",
+            "can you {command}",
+            "I need you to {command}",
+            "go {command}",
+            "launch {command}",
+            "perform {command}",
+            "check {command}"
+          ]
+        },
+        {
+          "name": "GetResultIntent",
+          "slots": [],
+          "samples": [
+            "what happened",
+            "what's the result",
+            "what did you do",
+            "get the result",
+            "read the result",
+            "what did claude say",
+            "any updates",
+            "is it done",
+            "what's the status",
+            "tell me the result"
+          ]
+        },
+        {
+          "name": "AMAZON.HelpIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.StopIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.CancelIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.FallbackIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.NavigateHomeIntent",
+          "samples": []
+        }
+      ],
+      "types": []
+    },
+    "dialog": {
+      "intents": [
+        {
+          "name": "RunCommandIntent",
+          "confirmationRequired": false,
+          "prompts": {},
+          "slots": [
+            {
+              "name": "command",
+              "type": "AMAZON.SearchQuery",
+              "confirmationRequired": false,
+              "elicitationRequired": true,
+              "prompts": {
+                "elicitation": "Elicit.Slot.command"
+              }
+            }
+          ]
+        }
+      ],
+      "delegationStrategy": "ALWAYS"
+    },
+    "prompts": [
+      {
+        "id": "Elicit.Slot.command",
+        "variations": [
+          {
+            "type": "PlainText",
+            "value": "What command should I run?"
+          }
         ]
-    }
+      }
+    ]
+  }
 }
