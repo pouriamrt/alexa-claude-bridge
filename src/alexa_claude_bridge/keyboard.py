@@ -36,12 +36,17 @@ GMEM_MOVEABLE = 0x0002
 
 
 def find_window(
-    title_fragment: str,
+    title_fragment: str | None = None,
     exclude: list[str] | None = None,
+    window_class: str | None = None,
 ) -> int | None:
-    """Find a visible window whose title contains the given text (case-insensitive).
+    """Find a visible window by title substring and/or window class name.
 
-    Windows whose title matches any string in *exclude* are skipped.
+    *window_class* — if set, only windows with this exact class name match.
+    *title_fragment* — if set, the window title must contain this text (case-insensitive).
+    *exclude* — windows whose title contains any of these strings are skipped.
+
+    At least one of *title_fragment* or *window_class* must be provided.
     """
     exclude_lower = [e.lower() for e in (exclude or [])]
     matches: list[int] = []
@@ -53,13 +58,24 @@ def find_window(
         length = user32.GetWindowTextLengthW(hwnd)
         if length == 0:
             return True
+
+        # Check window class first (cheapest filter)
+        if window_class:
+            cls_buf = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(hwnd, cls_buf, 256)
+            if cls_buf.value != window_class:
+                return True
+
         buf = ctypes.create_unicode_buffer(length + 1)
         user32.GetWindowTextW(hwnd, buf, length + 1)
         title = buf.value.lower()
+
         if any(ex in title for ex in exclude_lower):
             return True
-        if title_fragment.lower() in title:
-            matches.append(hwnd)
+        if title_fragment and title_fragment.lower() not in title:
+            return True
+
+        matches.append(hwnd)
         return True
 
     user32.EnumWindows(_enum_callback, 0)
@@ -113,12 +129,13 @@ def _send_ctrl_v() -> None:
 
 def inject_command(
     command: str,
-    window_title: str = "claude",
+    window_title: str | None = None,
     exclude_titles: list[str] | None = None,
+    window_class: str | None = None,
 ) -> bool:
     """Paste a command into a terminal window and press Enter.
 
-    1. Finds a window with `window_title` in its title bar
+    1. Finds a window matching *window_class* and/or *window_title*
        (skipping any whose title matches *exclude_titles*)
     2. Brings it to the foreground
     3. Copies the command to clipboard → Ctrl+V → Enter
@@ -127,9 +144,16 @@ def inject_command(
     """
     if exclude_titles is None:
         exclude_titles = ["Visual Studio Code"]
-    hwnd = find_window(window_title, exclude=exclude_titles)
+    hwnd = find_window(
+        title_fragment=window_title,
+        exclude=exclude_titles,
+        window_class=window_class,
+    )
     if not hwnd:
-        logger.warning("No window with '%s' in title — is Claude running?", window_title)
+        logger.warning(
+            "No matching window (title=%s, class=%s) — is Claude running?",
+            window_title, window_class,
+        )
         return False
 
     if not focus_window(hwnd):

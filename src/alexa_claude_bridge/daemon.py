@@ -33,13 +33,17 @@ def run() -> None:
     config = _load_config()
     queue_url = config["command_queue_url"]
     region = config.get("aws_region", "us-east-1")
-    window_title = config.get("window_title", "claude")
+    window_title = config.get("window_title")
+    window_class = config.get("window_class", "CASCADIA_HOSTING_WINDOW_CLASS")
     exclude_titles = config.get("exclude_titles", ["Visual Studio Code"])
 
     sqs = boto3.client("sqs", region_name=region)
 
     logger.info("Daemon started — polling %s", queue_url)
-    logger.info("Looking for window with '%s' in title (excluding %s)", window_title, exclude_titles)
+    logger.info(
+        "Window match: class=%s, title=%s, excluding=%s",
+        window_class, window_title, exclude_titles,
+    )
 
     while os.path.exists(FLAG_FILE):
         try:
@@ -59,7 +63,7 @@ def run() -> None:
                 command = body["command"]
                 logger.info("Alexa says: %s", command)
 
-                if inject_command(command, window_title, exclude_titles=exclude_titles):
+                if inject_command(command, window_title, exclude_titles=exclude_titles, window_class=window_class):
                     logger.info("Command injected into Claude terminal")
                 else:
                     logger.warning("Failed to inject — window not found")
