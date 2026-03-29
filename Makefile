@@ -1,9 +1,10 @@
 # ── Alexa-Claude Bridge Makefile ──────────────────────────────────────
 #
 # Usage:
-#   make setup        — first-time: create AWS resources + .env + install deps
+#   make setup        — first-time: AWS resources + .env + deps + bridge install
 #   make deploy       — package and deploy Lambda + update Alexa skill model
-#   make run          — start the bridge (wraps your Claude REPL)
+#   make start        — activate bridge (daemon + flag)
+#   make stop         — deactivate bridge
 #   make teardown     — destroy all AWS resources
 #
 # Prerequisites:
@@ -35,14 +36,14 @@ ENV_FILE     := .env
 #  High-level targets
 # ======================================================================
 
-.PHONY: setup deploy run teardown clean help
+.PHONY: setup deploy start stop status teardown clean help
 .DEFAULT_GOAL := help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
-setup: infra env install ## First-time setup: AWS resources + .env + deps
+setup: infra env install bridge-install ## Full setup: AWS + deps + bridge config
 
 deploy: lambda-deploy ## Package Lambda and deploy (optionally update skill)
 	@echo ""
@@ -55,13 +56,17 @@ deploy: lambda-deploy ## Package Lambda and deploy (optionally update skill)
 		echo "Then save the skill ID to .skill-id for future deploys"; \
 	fi
 
-run: ## Start the bridge (wraps your Claude REPL)
-	@if [ ! -f $(ENV_FILE) ]; then \
-		echo "ERROR: No .env file. Run 'make setup' first."; \
-		exit 1; \
-	fi
-	@set -a; source $(ENV_FILE); set +a; \
-	uv run alexa-claude
+start: ## Activate bridge (starts daemon, enables notifications)
+	uv run alexa-bridge start
+
+stop: ## Deactivate bridge
+	uv run alexa-bridge stop
+
+status: ## Show bridge status
+	uv run alexa-bridge status
+
+bridge-install: ## Configure bridge: config file, notify script, CLAUDE.md rule
+	uv run alexa-bridge install
 
 # ======================================================================
 #  Infrastructure
