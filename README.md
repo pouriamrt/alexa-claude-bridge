@@ -407,7 +407,3 @@ A channel server also enables a **reply tool**, so Claude can send results back 
 **Why not now**: Channels are in [research preview](https://code.claude.com/docs/en/channels) (requires Claude Code v2.1.80+, `claude.ai` login, and a `--dangerously-load-development-channels` flag for custom channels). Once the feature stabilizes and drops these requirements, the channel server can be built as an alternative transport alongside the current keyboard injection approach.
 
 ---
-
-<p align="center">
-  <sub>Built with <a href="https://claude.ai/code">Claude Code</a> and a healthy dislike for walking to the keyboard</sub>
-</p>
