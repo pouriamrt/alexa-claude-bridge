@@ -387,6 +387,27 @@ All resources are created in your configured AWS region (default: `us-east-1`). 
 
 ---
 
+## Future Work
+
+### Claude Code Channels (native MCP integration)
+
+The biggest architectural improvement on the horizon is migrating from keyboard injection to [Claude Code Channels](https://code.claude.com/docs/en/channels-reference), a new feature that lets MCP servers push events directly into a Claude Code session over stdio.
+
+**What changes**: The most fragile part of this project, `keyboard.py` (window class lookup, focus stealing, clipboard manipulation, `ctypes` struct sizing), gets replaced by a single `mcp.notification()` call. Commands arrive as structured `<channel>` tags with metadata instead of pasted text.
+
+**What stays**: The Alexa skill, Lambda, SQS queue, and all notification channels (ntfy.sh, Notify Me, DynamoDB) remain unchanged. The channel server would poll SQS the same way the current daemon does, just with a different delivery mechanism.
+
+```
+Current:    SQS → Daemon → keyboard injection → Claude terminal window
+Future:     SQS → Channel MCP server → Claude Code session (native)
+```
+
+A channel server also enables a **reply tool**, so Claude can send results back directly through the channel instead of relying on the Stop hook + flag file chain. Permission relay would let you approve or deny Claude's tool calls from your phone.
+
+**Why not now**: Channels are in [research preview](https://code.claude.com/docs/en/channels) (requires Claude Code v2.1.80+, `claude.ai` login, and a `--dangerously-load-development-channels` flag for custom channels). Once the feature stabilizes and drops these requirements, the channel server can be built as an alternative transport alongside the current keyboard injection approach.
+
+---
+
 <p align="center">
   <sub>Built with <a href="https://claude.ai/code">Claude Code</a> and a healthy dislike for walking to the keyboard</sub>
 </p>
